@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/chroma/
+data/uploads/
+data/sample_pdfs/
+logs/
+*.log
+.DS_Store
+.streamlit/secrets.toml
+.ipynb_checkpoints/
+.idea/
+.vscode/
