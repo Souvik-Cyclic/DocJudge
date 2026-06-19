@@ -8,3 +8,10 @@ from __future__ import annotations
 from functools import lru_cache
 
 import chromadb
+
+from config import config
+from tools.embedder import embed_query, embed_texts
+
+@lru_cache(maxsize=1)
+def _client():
+    return chromadb.PersistentClient(path=config.CHROMA_DIR)
