@@ -14,3 +14,27 @@ import io
 
 import fitz
 import numpy as np
+from PIL import Image
+
+try:
+    from rapidocr_onnxruntime import RapidOCR
+
+    _HAS_OCR = True
+except Exception:
+    _HAS_OCR = False
+
+_engine = None
+
+def _get_engine():
+    global _engine
+    if _engine is None and _HAS_OCR:
+        _engine = RapidOCR()
+    return _engine
+
+def ocr_available() -> bool:
+    if not _HAS_OCR:
+        return False
+    try:
+        return _get_engine() is not None
+    except Exception:
+        return False
