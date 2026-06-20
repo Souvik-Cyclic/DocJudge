@@ -33,3 +33,23 @@ _POLICY_SIGNALS = (
     "guidelines", "regulation", "mandatory", "enforcement", "applicable",
     "obligations", "permitted", "violation", "the company shall", "section",
 )
+
+_WORD = re.compile(r"[a-z0-9][a-z0-9\-]+")
+
+def _signal_score(text: str, signals: tuple[str, ...]) -> tuple[float, list[str]]:
+    """Count signal-word hits, normalized by sample length. Returns (score, hits)."""
+    hits = []
+    total = 0
+    for sig in signals:
+        c = text.count(sig)
+        if c:
+            total += c
+            hits.append(sig)
+    score = total / (max(len(text), 1) / 1000.0)
+    return score, hits
+
+def _numeric_density(text: str) -> float:
+    if not text:
+        return 0.0
+    digits = sum(ch.isdigit() for ch in text)
+    return digits / len(text)
