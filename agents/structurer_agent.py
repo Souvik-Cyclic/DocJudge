@@ -22,3 +22,17 @@ from models import IndexedChunk
 from observability.logging_config import log_info, timed_node
 from prompts.structurer_prompt import STRUCTURER_SYSTEM
 from tools import chromadb_tool
+from tools.chunkers import get_chunker
+from tools.classifier import classify_document
+from tools.table_extractor import table_to_markdown
+
+class ChunkLabel(BaseModel):
+    section: str = "General"
+    content_type: Literal["prose", "table", "list"] = "prose"
+    topic_tags: list[str] = Field(default_factory=list)
+    context_prefix: str = ""
+
+class BatchLabels(BaseModel):
+    """Labels for a batch of chunks, in the same order they were given."""
+
+    labels: list[ChunkLabel] = Field(default_factory=list)
