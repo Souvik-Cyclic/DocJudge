@@ -53,3 +53,64 @@ def _numeric_density(text: str) -> float:
         return 0.0
     digits = sum(ch.isdigit() for ch in text)
     return digits / len(text)
+
+def classify_heuristic(sample_text: str) -> tuple[DocType, float, list[str]]:
+    """Deterministic, free classification. Returns (doc_type, confidence, signals)."""
+    low = sample_text.lower()
+    fin_score, fin_hits = _signal_score(low, _FINANCIAL_SIGNALS)
+    pol_score, pol_hits = _signal_score(low, _POLICY_SIGNALS)
+
+    fin_score += _numeric_density(low) * 8.0
+
+    best = max(fin_score, pol_score)
+    if best < 0.5:
+        return "general", 0.3, []
+
+    if fin_score >= pol_score:
+        doc_type: DocType = "financial"
+        signals = fin_hits
+    else:
+        doc_type = "policy"
+        signals = pol_hits
+
+    margin = abs(fin_score - pol_score) / (best or 1.0)
+    confidence = round(min(1.0, 0.4 + margin), 2)
+    return doc_type, confidence, signals[:6]
+
+def _classify_llm(doc_name: str, sample_text: str) -> DocType | None:
+    """Best-effort LLM tie-breaker. Returns a doc_type or None on any failure."""
+    try:
+        from pydantic import BaseModel
+
+        from config import config
+        from llm import invoke_structured
+
+        class _Guess(BaseModel):
+            doc_type: DocType = "general"
+            reason: str = ""
+
+        system = (
+            "Classify the document excerpt as exactly one of: 'policy' (legal / "
+            "policy / governance / terms with clauses and obligations), "
+            "'financial' (financial statements, reports, figures, tables of "
+            "numbers), or 'general'. Return only the type and a one-line reason."
+        )
+        user = f"Document name: {doc_name}\n\nExcerpt:\n{sample_text[:2500]}"
+        guess: _Guess = invoke_structured(
+            config.LLM_MODEL, _Guess, [("system", system), ("user", user)]
+        )
+        return guess.doc_type
+    except Exception:
+        return None
+
+def classify_document(doc_name: str, sample_text: str) -> tuple[DocType, float, list[str]]:
+    """Classify a document. Heuristic first; LLM only breaks low-confidence ties.
+
+    Always returns a usable (doc_type, confidence, signals) — never raises.
+    """
+    doc_type, confidence, signals = classify_heuristic(sample_text)
+    if confidence < 0.55:
+        llm_type = _classify_llm(doc_name, sample_text)
+        if llm_type is not None:
+            return llm_type, max(confidence, 0.55), signals
+    return doc_type, confidence, signals
