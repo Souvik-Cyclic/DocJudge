@@ -130,3 +130,27 @@ def _pack(blocks: list[str], *, target: int, overlap: int,
 def default_chunker(blocks: list[str]) -> list[tuple[str, str]]:
     """Generic prose chunking (original behavior): ~900 chars, 150 overlap."""
     return _pack(blocks, target=900, overlap=150, heading_fn=_is_heading_generic)
+
+def policy_chunker(blocks: list[str]) -> list[tuple[str, str]]:
+    """Clause/section-aware: tighter chunks that respect legal hierarchy.
+
+    Smaller target keeps individual clauses/definitions retrievable instead of
+    being diluted inside a large block.
+    """
+    return _pack(blocks, target=700, overlap=120, heading_fn=_is_heading_legal)
+
+def financial_chunker(blocks: list[str]) -> list[tuple[str, str]]:
+    """Table/number-aware: larger prose windows for MD&A, but figure-dense blocks
+    are isolated so a number never loses its row/header context."""
+    return _pack(blocks, target=1100, overlap=100,
+                 heading_fn=_is_heading_generic, isolate_fn=_is_numeric_block)
+
+CHUNKERS: dict[str, Callable[[list[str]], list[tuple[str, str]]]] = {
+    "policy": policy_chunker,
+    "financial": financial_chunker,
+    "general": default_chunker,
+}
+
+def get_chunker(doc_type: str) -> Callable[[list[str]], list[tuple[str, str]]]:
+    """Return the chunker for a doc_type, falling back to the default."""
+    return CHUNKERS.get(doc_type, default_chunker)
