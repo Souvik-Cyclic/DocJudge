@@ -14,3 +14,9 @@ import os
 
 from tools import ocr_tool
 from tools.pdf_extractor import extract_text_blocks, page_is_empty
+from tools.table_extractor import extract_tables
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp", ".gif"}
+DOC_EXTS = {".docx"}
+PPT_EXTS = {".pptx"}
+SHEET_EXTS = {".xlsx", ".xls", ".csv"}
