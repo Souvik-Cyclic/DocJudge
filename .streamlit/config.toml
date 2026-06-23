@@ -1,0 +1,13 @@
+# Disable the source file watcher. On Python 3.14 the watcher walks every
+# imported module — including transformers' image-model submodules (vitpose,
+# yolos, zoedepth) that import torchvision — producing noisy ModuleNotFoundError
+# tracebacks. We don't need hot-reload for the demo, so turn it off.
+[server]
+fileWatcherType = "none"
+
+[theme]
+base = "dark"
+primaryColor = "#2d6a9f"
+
+[browser]
+gatherUsageStats = false
