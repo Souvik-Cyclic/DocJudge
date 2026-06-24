@@ -60,3 +60,51 @@ def _pdf(path: str) -> list[dict]:
         out.append({"page": rec["page"], "blocks": blocks,
                     "tables": tables_by_page.get(rec["page"], []), "ocr": used_ocr})
     return out
+
+def _image(path: str) -> list[dict]:
+    if not ocr_tool.ocr_available():
+        return [{"page": 1, "blocks": [], "tables": [], "ocr": False,
+                 "_warn": "image needs OCR (pip install rapidocr-onnxruntime)"}]
+    text = ocr_tool.ocr_image(path)
+    return [{"page": 1, "blocks": [text] if text else [], "tables": [], "ocr": bool(text)}]
+
+def _docx(path: str) -> list[dict]:
+    import docx
+    d = docx.Document(path)
+    blocks = [p.text.strip() for p in d.paragraphs if p.text.strip()]
+    tables = []
+    for t in d.tables:
+        rows = [[c.text.strip() for c in r.cells] for r in t.rows]
+        if rows:
+            tables.append(rows)
+    return [{"page": 1, "blocks": blocks, "tables": tables, "ocr": False}]
+
+def _pptx(path: str) -> list[dict]:
+    from pptx import Presentation
+    prs = Presentation(path)
+    out = []
+    for i, slide in enumerate(prs.slides, start=1):
+        blocks = [s.text_frame.text.strip() for s in slide.shapes
+                  if s.has_text_frame and s.text_frame.text.strip()]
+        out.append({"page": i, "blocks": blocks, "tables": [], "ocr": False})
+    return out or [{"page": 1, "blocks": [], "tables": [], "ocr": False}]
+
+def _sheet(path: str) -> list[dict]:
+    import pandas as pd
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".csv":
+        frames = {"Sheet1": pd.read_csv(path, dtype=str, keep_default_na=False)}
+    else:
+        frames = {k: v.fillna("") for k, v in pd.read_excel(path, sheet_name=None, dtype=str).items()}
+    out = []
+    for i, (name, df) in enumerate(frames.items(), start=1):
+        header = [str(c) for c in df.columns]
+        rows = [header] + df.astype(str).values.tolist()
+        out.append({"page": i, "blocks": [f"Sheet: {name}"], "tables": [rows], "ocr": False})
+    return out or [{"page": 1, "blocks": [], "tables": [], "ocr": False}]
+
+def _text(path: str) -> list[dict]:
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+    blocks = [b.strip() for b in content.split("\n\n") if b.strip()]
+    return [{"page": 1, "blocks": blocks, "tables": [], "ocr": False}]
