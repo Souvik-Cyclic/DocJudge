@@ -89,3 +89,21 @@ def get_doc_chunks(doc_names: list[str] | None = None) -> list[dict]:
         out.append({"chunk_id": cid, "text": doc, **meta})
     out.sort(key=lambda c: (c.get("doc_name", ""), c.get("page", 0), c.get("chunk_id", "")))
     return out
+
+def count() -> int:
+    return get_collection().count()
+
+def list_doc_names() -> list[str]:
+    """Distinct doc_name values currently indexed (for orchestrator scoping)."""
+    col = get_collection()
+    if col.count() == 0:
+        return []
+    metas = col.get(include=["metadatas"]).get("metadatas", [])
+    return sorted({m.get("doc_name", "") for m in metas if m.get("doc_name")})
+
+def reset() -> None:
+    """Drop the collection (used by eval harness for a clean slate)."""
+    try:
+        _client().delete_collection(config.CHROMA_COLLECTION)
+    except Exception:
+        pass
