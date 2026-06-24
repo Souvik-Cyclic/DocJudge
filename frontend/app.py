@@ -217,3 +217,174 @@ with st.sidebar:
 
 _CONF_COLORS = {"high": "#16a34a", "medium": "#d97706", "low": "#dc2626",
                 "not_found": "#64748b", "?": "#64748b"}
+
+def _verdict_pill(v: dict) -> str:
+    ok = v.get("overall_pass")
+    color = "#16a34a" if ok else "#dc2626"
+    label = "VERIFIED" if ok else "NEEDS REVIEW"
+    return f"<span class='dj-pill' style='background:{color};color:#fff'>{label}</span>"
+
+def _format_answer(text: str) -> str:
+    if not text:
+        return "—"
+    text = re.sub(r"\s+(\d{1,2}[.)])\s+", r"\n\1 ", text)
+    return text.replace("\n", "  \n")
+
+def render_answer(res: dict) -> None:
+    ans = res.get("answer_response", {}) or {}
+    verdict = res.get("judge_verdict", {}) or {}
+
+    left, right = st.columns([3, 2])
+    with left:
+        if ans.get("refusal"):
+            st.info("No grounded answer. " + ans.get("answer", ""))
+        else:
+            conf = ans.get("confidence", "?")
+            color = _CONF_COLORS.get(conf, "#64748b")
+            st.markdown(
+                f"**Answer** &nbsp;<span class='dj-pill' "
+                f"style='background:{color};color:#fff'>{conf}</span>",
+                unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown(_format_answer(ans.get("answer", "—")))
+
+        cites = ans.get("cited_chunks", [])
+        if cites:
+            st.markdown(f"**Sources** ({len(cites)})")
+            for i, c in enumerate(cites, 1):
+                with st.expander(f"{i}. {c.get('doc_name')} - page {c.get('page')}"):
+                    st.markdown(f"> {c.get('snippet', '')}")
+                    st.caption(f"chunk {c.get('chunk_id')}")
+
+    with right:
+        st.markdown("**Judge verdict**")
+        st.markdown(_verdict_pill(verdict), unsafe_allow_html=True)
+        st.write("")
+        cols = st.columns(3)
+        cols[0].metric("Grounded", "Yes" if verdict.get("grounded") else "No")
+        cols[1].metric("Hallucination",
+                       "None" if not verdict.get("hallucination_detected") else "Found")
+        cols[2].metric("Citations", "Valid" if verdict.get("citations_valid") else "Invalid")
+        if verdict.get("refusal_appropriate") is not None:
+            st.caption(f"Refusal appropriate: {verdict.get('refusal_appropriate')}")
+        if verdict.get("issues"):
+            with st.expander("Judge issues"):
+                for iss in verdict["issues"]:
+                    st.markdown(f"- {iss}")
+
+_TYPE_COLORS = {"policy": "#7c3aed", "financial": "#0891b2", "general": "#64748b"}
+
+def render_inspector() -> None:
+    """Show how each indexed document was classified and chunked, including any
+    OCR-derived text — so chunking is transparent, not a black box."""
+    docs = st.session_state.session_docs or chromadb_tool.list_doc_names()
+    if not docs:
+        st.caption("No documents indexed yet.")
+        return
+    chunks = chromadb_tool.get_doc_chunks(docs)
+    if not chunks:
+        st.caption("No chunks stored for these documents.")
+        return
+
+    by_doc: dict[str, list[dict]] = {}
+    for c in chunks:
+        by_doc.setdefault(c.get("doc_name", "?"), []).append(c)
+
+    for doc, cs in by_doc.items():
+        dtype = cs[0].get("doc_type", "general")
+        color = _TYPE_COLORS.get(dtype, "#64748b")
+        ocr_n = sum(1 for c in cs if c.get("from_ocr"))
+        ocr_txt = f" · <b>{ocr_n} OCR</b>" if ocr_n else ""
+        st.markdown(
+            f"**{doc}** &nbsp;<span class='dj-pill' style='background:{color};"
+            f"color:#fff'>{dtype}</span>&nbsp; <span style='color:#94a3b8'>"
+            f"{len(cs)} chunks{ocr_txt}</span>",
+            unsafe_allow_html=True)
+        for c in cs:
+            tags = [c.get("content_type", "prose")]
+            if c.get("from_ocr"):
+                tags.append("OCR")
+            label = (f"p{c.get('page')} · {c.get('section', '')} · "
+                     f"[{', '.join(tags)}] · {c.get('chunk_id')}")
+            with st.expander(label):
+                st.text(c.get("text", ""))
+        st.divider()
+
+def render_status(res: dict) -> None:
+    if res.get("human_approved") is not None:
+        tag = "Approved by reviewer" if res.get("human_approved") else "Rejected by reviewer"
+        st.caption(f"{tag} · retries: {res.get('retry_count', 0)}")
+    if res.get("trace"):
+        with st.expander("Execution trace"):
+            for t in res["trace"]:
+                st.markdown(f"<div class='dj-step'>{t}</div>", unsafe_allow_html=True)
+
+if chromadb_tool.count() == 0:
+    st.info("Upload one or more PDFs in the sidebar and click Ingest to begin.")
+
+if show_inspector:
+    with st.expander("🔎 Index inspector — extracted text, OCR & chunking",
+                     expanded=True):
+        render_inspector()
+
+for turn in st.session_state.history:
+    st.chat_message("user").write(turn["q"])
+    with st.chat_message("assistant"):
+        render_answer(turn["final"])
+        render_status(turn["final"])
+
+pending = st.session_state.pending
+if pending is not None:
+    st.chat_message("user").write(st.session_state.pending_q)
+    with st.chat_message("assistant"):
+        payload = pending["__interrupt__"][0].value
+        render_answer({"answer_response": payload.get("answer", {}),
+                       "judge_verdict": payload.get("judge_verdict", {})})
+        st.divider()
+        st.markdown("**Human review** — required before this answer is accepted.")
+        c1, c2, c3 = st.columns(3)
+        relevance = c1.slider("Relevance", 1, 5, 4)
+        grounding = c2.slider("Grounding", 1, 5, 4)
+        citation = c3.slider("Citation quality", 1, 5, 4)
+        feedback = st.text_input("Feedback (if rejecting)")
+        a, b = st.columns(2)
+        if a.button("Approve", use_container_width=True, type="primary"):
+            final = run_stream(
+                Command(resume={"relevance": relevance, "grounding": grounding,
+                                "citation": citation, "decision": "approve", "feedback": ""}),
+                thread)
+            st.session_state.history.append({"q": st.session_state.pending_q, "final": final})
+            st.session_state.pending = None
+            st.rerun()
+        if b.button("Reject & re-answer", use_container_width=True):
+            res = run_stream(
+                Command(resume={"relevance": relevance, "grounding": grounding,
+                                "citation": citation, "decision": "reject", "feedback": feedback}),
+                thread)
+            if isinstance(res, dict) and "__interrupt__" in res:
+                st.session_state.pending = res
+            else:
+                st.session_state.history.append({"q": st.session_state.pending_q, "final": res})
+                st.session_state.pending = None
+            st.rerun()
+
+disabled = pending is not None
+question = st.chat_input("Ask a question about your documents...", disabled=disabled)
+if question:
+    if not config.GROQ_API_KEY:
+        st.error("GROQ_API_KEY not set. Add it to .env.")
+    elif chromadb_tool.count() == 0:
+        st.error("No documents indexed yet. Upload and ingest first.")
+    else:
+        restrict = (st.session_state.session_docs
+                    if scope_only and st.session_state.session_docs else None)
+        res = run_stream(
+            {"user_question": question, "documents": [], "restrict_docs": restrict,
+             "ingest_only": False, "retry_count": 0, "trace": []},
+            thread)
+        if isinstance(res, dict) and "__interrupt__" in res:
+            st.session_state.pending = res
+            st.session_state.pending_q = question
+        else:
+            st.session_state.history.append({"q": question, "final": res})
+        st.rerun()
