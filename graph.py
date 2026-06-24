@@ -55,3 +55,68 @@ def route_after_orchestrator(state: dict) -> str:
     if state.get("ingest_only"):
         return "extraction"
     return "answer" if state.get("documents_ingested") else "extraction"
+
+def route_after_structurer(state: dict) -> str:
+    """Ingest-only runs stop after indexing; otherwise proceed to answering."""
+    return END if state.get("ingest_only") else "answer"
+
+def route_after_judge(state: dict) -> str:
+    verdict = state.get("judge_verdict", {}) or {}
+    retries = state.get("retry_count", 0)
+    if verdict.get("overall_pass"):
+        return "human_review"
+    if retries < config.MAX_RETRIES:
+        return "retry"
+    return "human_review"
+
+def route_after_human(state: dict) -> str:
+    """If the human rejects and retries remain, re-route to the Answer Agent."""
+    approved = state.get("human_approved")
+    retries = state.get("retry_count", 0)
+    if approved is False and retries < config.MAX_RETRIES:
+        return "retry"
+    return END
+
+def _bump_retry(state: dict) -> dict:
+    return {"retry_count": state.get("retry_count", 0) + 1}
+
+def build_graph(checkpointer=None):
+    g = StateGraph(GraphState)
+
+    g.add_node("orchestrator", orchestrator_node)
+    g.add_node("extraction", extraction_node)
+    g.add_node("structurer", structurer_node)
+    g.add_node("answer", answer_node)
+    g.add_node("judge", judge_node)
+    g.add_node("human_review", human_review_node)
+    g.add_node("bump_retry", timed_node("bump_retry")(_bump_retry))
+
+    g.set_entry_point("orchestrator")
+
+    g.add_conditional_edges(
+        "orchestrator",
+        route_after_orchestrator,
+        {"extraction": "extraction", "answer": "answer", "human_review": "human_review"},
+    )
+    g.add_edge("extraction", "structurer")
+    g.add_conditional_edges(
+        "structurer",
+        route_after_structurer,
+        {"answer": "answer", END: END},
+    )
+    g.add_edge("answer", "judge")
+
+    g.add_conditional_edges(
+        "judge",
+        route_after_judge,
+        {"human_review": "human_review", "retry": "bump_retry"},
+    )
+    g.add_edge("bump_retry", "answer")
+
+    g.add_conditional_edges(
+        "human_review",
+        route_after_human,
+        {"retry": "bump_retry", END: END},
+    )
+
+    return g.compile(checkpointer=checkpointer or MemorySaver())
